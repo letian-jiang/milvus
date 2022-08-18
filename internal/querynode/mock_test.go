@@ -1259,6 +1259,16 @@ func genSimpleSealedSegment(msgLength int) (*Segment, error) {
 		msgLength)
 }
 
+func genSimpleSealedSegmentWithSegmentID(msgLength, segmentID int) (*Segment, error) {
+	schema := genTestCollectionSchema()
+	return genSealedSegment(schema,
+		defaultCollectionID,
+		defaultPartitionID,
+		UniqueID(segmentID),
+		defaultDMLChannel,
+		msgLength)
+}
+
 func genSimpleReplica() (ReplicaInterface, error) {
 	pool, err := concurrency.NewPool(runtime.GOMAXPROCS(0))
 	if err != nil {
