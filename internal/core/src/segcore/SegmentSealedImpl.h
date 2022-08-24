@@ -49,6 +49,8 @@ class SegmentSealedImpl : public SegmentSealed {
     HasIndex(FieldId field_id) const override;
     bool
     HasFieldData(FieldId field_id) const override;
+    void 
+    BuildVecIndex(FieldId field_id) override;
 
     int64_t
     get_segment_id() const override {

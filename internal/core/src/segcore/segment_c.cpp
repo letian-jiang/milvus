@@ -247,6 +247,20 @@ UpdateSealedSegmentIndex(CSegmentInterface c_segment, CLoadIndexInfo c_load_inde
     }
 }
 
+// Create, build and load vector index for sealed segment. For unit testing usage.
+CStatus
+BuildSealedSegmentVecIndex(CSegmentInterface c_segment, int64_t vec_field_id) {
+    try {
+        auto segment_interface = reinterpret_cast<milvus::segcore::SegmentInterface*>(c_segment);
+        auto segment = dynamic_cast<milvus::segcore::SegmentSealedImpl*>(segment_interface);
+        AssertInfo(segment != nullptr, "segment conversion failed");
+        segment->BuildVecIndex(milvus::FieldId(vec_field_id));
+        return milvus::SuccessCStatus();
+    } catch (std::exception& e) {
+        return milvus::FailureCStatus(UnexpectedError, e.what());
+    }
+}
+
 CStatus
 DropFieldData(CSegmentInterface c_segment, int64_t field_id) {
     try {

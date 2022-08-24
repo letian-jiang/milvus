@@ -20,7 +20,11 @@ using namespace milvus;
 using namespace milvus::query;
 using namespace milvus::segcore;
 
-static int dim = 768;
+const int dim = 512;
+const int N = 100000;
+const int nq = 100;
+const int64_t ts = MAX_TIMESTAMP;
+const int seed = 66;
 
 const auto schema = []() {
     auto schema = std::make_shared<Schema>();
@@ -30,11 +34,14 @@ const auto schema = []() {
     return schema;
 }();
 
+const auto dataset_ = [] {
+    auto dataset_ = DataGen(schema, N, seed);
+    return dataset_;
+}();
+
 const auto plan = [] {
     std::string dsl = R"({
         "bool": {
-            "must": [
-            {
                 "vector": {
                     "fakevec": {
                         "metric_type": "L2",
@@ -42,83 +49,46 @@ const auto plan = [] {
                             "nprobe": 10
                         },
                         "query": "$0",
-                        "topk": 5,
+                        "topk": 10,
                         "round_decimal": -1
                     }
                 }
-            }
-            ]
         }
     })";
     auto plan = CreatePlan(*schema, dsl);
     return plan;
 }();
+
 auto ph_group = [] {
-    auto num_queries = 10;
-    auto ph_group_raw = CreatePlaceholderGroup(num_queries, dim, 1024);
+    auto ph_group_raw = CreatePlaceholderGroup(nq, dim, seed);
     auto ph_group = ParsePlaceholderGroup(plan.get(), ph_group_raw.SerializeAsString());
     return ph_group;
 }();
 
 static void
-Search_SmallIndex(benchmark::State& state) {
-    // schema->AddDebugField("age", DataType::FLOAT);
-
-    static int64_t N = 1024 * 32;
-    const auto dataset_ = [] {
-        auto dataset_ = DataGen(schema, N);
-        return dataset_;
-    }();
-
-    auto is_small_index = state.range(0);
-    auto chunk_rows = state.range(1) * 1024;
-    auto segconf = SegcoreConfig::default_config();
-    segconf.set_chunk_rows(chunk_rows);
-    auto segment = CreateGrowingSegment(schema, -1, segconf);
-    if (!is_small_index) {
-        segment->disable_small_index();
-    }
-    segment->PreInsert(N);
-    segment->Insert(0, N, dataset_.row_ids_.data(), dataset_.timestamps_.data(), dataset_.raw_);
-
-    Timestamp time = 10000000;
+Search_Sealed_Without_Index(benchmark::State& state) {
+    auto segment = CreateSealedSegment(schema);
+    SealedLoadFieldData(dataset_, *segment);
 
     for (auto _ : state) {
-        auto qr = segment->Search(plan.get(), ph_group.get(), time);
+        auto qr = segment->Search(plan.get(), ph_group.get(), ts);
     }
 }
-
-BENCHMARK(Search_SmallIndex)->MinTime(5)->ArgsProduct({{true, false}, {8, 16, 32}});
 
 static void
-Search_Sealed(benchmark::State& state) {
+Search_Sealed_With_Index(benchmark::State& state) {
     auto segment = CreateSealedSegment(schema);
-    static int64_t N = 1024 * 1024;
-    const auto dataset_ = [] {
-        auto dataset_ = DataGen(schema, N);
-        return dataset_;
-    }();
     SealedLoadFieldData(dataset_, *segment);
-    auto choice = state.range(0);
-    if (choice == 0) {
-        // Brute Force
-    } else if (choice == 1) {
-        // ivf
-        auto vec = dataset_.get_col<float>(milvus::FieldId(100));
-        auto indexing = GenVecIndexing(N, dim, vec.data());
-        LoadIndexInfo info;
-        info.index = indexing;
-        info.field_id = (*schema)[FieldName("fakevec")].get_id().get();
-        info.index_params["index_type"] = "IVF";
-        info.index_params["index_mode"] = "CPU";
-        info.index_params["metric_type"] = knowhere::metric::L2;
-        segment->DropFieldData(milvus::FieldId(100));
-        segment->LoadIndex(info);
+    segment->BuildVecIndex(milvus::FieldId(100));
+
+    for (int i = 0; i < 100; i++) {
+        auto qr = segment->Search(plan.get(), ph_group.get(), ts);
     }
-    Timestamp time = 10000000;
+
     for (auto _ : state) {
-        auto qr = segment->Search(plan.get(), ph_group.get(), time);
+        auto qr = segment->Search(plan.get(), ph_group.get(), ts);
     }
 }
 
-BENCHMARK(Search_Sealed)->MinTime(5)->Arg(1)->Arg(0);
+BENCHMARK(Search_Sealed_Without_Index);
+BENCHMARK(Search_Sealed_With_Index);

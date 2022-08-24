@@ -63,8 +63,8 @@ const (
 
 	defaultPKFieldName  = "pk"
 	defaultTopK         = int64(10)
-	defaultRoundDecimal = int64(6)
-	defaultDim          = 128
+	defaultRoundDecimal = int64(-1)
+	defaultDim          = 512
 	defaultNProb        = 10
 	defaultEf           = 10
 	defaultMetricType   = L2
@@ -127,10 +127,10 @@ const (
 	Jaccard  = "JACCARD"
 	tanimoto = "TANIMOTO"
 
-	nlist          = 100
+	nlist          = 1024
 	m              = 4
 	nbits          = 8
-	nprobe         = 8
+	nprobe         = 10
 	sliceSize      = 4
 	efConstruction = 200
 	ef             = 200
@@ -313,6 +313,7 @@ func loadIndexForSegment(ctx context.Context, node *QueryNode, segmentID UniqueI
 	if err != nil {
 		return err
 	}
+	fmt.Println("indexPaths: ", indexPaths)
 	_, indexParams := genIndexParams(indexType, metricType)
 	indexInfo := &querypb.FieldIndexInfo{
 		FieldID:        simpleFloatVecField.id,
@@ -356,6 +357,7 @@ func loadIndexForSegment(ctx context.Context, node *QueryNode, segmentID UniqueI
 	if err != nil {
 		return err
 	}
+	fmt.Println("loadIndexForSegment:", vecFieldInfo)
 	if vecFieldInfo == nil {
 		return fmt.Errorf("nil vecFieldInfo, load index failed")
 	}
@@ -505,14 +507,14 @@ func genIndexParams(indexType, metricType string) (map[string]string, map[string
 }
 
 func genTestCollectionSchema(pkTypes ...schemapb.DataType) *schemapb.CollectionSchema {
-	fieldBool := genConstantFieldSchema(simpleBoolField)
-	fieldInt8 := genConstantFieldSchema(simpleInt8Field)
-	fieldInt16 := genConstantFieldSchema(simpleInt16Field)
-	fieldInt32 := genConstantFieldSchema(simpleInt32Field)
-	fieldFloat := genConstantFieldSchema(simpleFloatField)
-	fieldDouble := genConstantFieldSchema(simpleDoubleField)
+	// fieldBool := genConstantFieldSchema(simpleBoolField)
+	// fieldInt8 := genConstantFieldSchema(simpleInt8Field)
+	// fieldInt16 := genConstantFieldSchema(simpleInt16Field)
+	// fieldInt32 := genConstantFieldSchema(simpleInt32Field)
+	// fieldFloat := genConstantFieldSchema(simpleFloatField)
+	// fieldDouble := genConstantFieldSchema(simpleDoubleField)
 	floatVecFieldSchema := genVectorFieldSchema(simpleFloatVecField)
-	binVecFieldSchema := genVectorFieldSchema(simpleBinVecField)
+	// binVecFieldSchema := genVectorFieldSchema(simpleBinVecField)
 	var pkFieldSchema *schemapb.FieldSchema
 	var pkType schemapb.DataType
 	if len(pkTypes) == 0 {
@@ -531,14 +533,14 @@ func genTestCollectionSchema(pkTypes ...schemapb.DataType) *schemapb.CollectionS
 		Name:   defaultCollectionName,
 		AutoID: false,
 		Fields: []*schemapb.FieldSchema{
-			fieldBool,
-			fieldInt8,
-			fieldInt16,
-			fieldInt32,
-			fieldFloat,
-			fieldDouble,
+			// fieldBool,
+			// fieldInt8,
+			// fieldInt16,
+			// fieldInt32,
+			// fieldFloat,
+			// fieldDouble,
 			floatVecFieldSchema,
-			binVecFieldSchema,
+			// binVecFieldSchema,
 			pkFieldSchema,
 		},
 	}
@@ -1259,7 +1261,7 @@ func genSimpleSealedSegment(msgLength int) (*Segment, error) {
 		msgLength)
 }
 
-func genSimpleSealedSegmentWithSegmentID(msgLength, segmentID int) (*Segment, error) {
+func genSimpleSealedSegmentWithSegmentID(msgLength int, segmentID UniqueID) (*Segment, error) {
 	schema := genTestCollectionSchema()
 	return genSealedSegment(schema,
 		defaultCollectionID,
@@ -1561,6 +1563,7 @@ func genSearchRequest(nq int64, indexType string, schema *schemapb.CollectionSch
 	if err2 != nil {
 		return nil, err2
 	}
+	// fmt.Println(simpleDSL)
 	return &internalpb.SearchRequest{
 		Base:             genCommonMsgBase(commonpb.MsgType_Search),
 		CollectionID:     defaultCollectionID,
@@ -1569,6 +1572,7 @@ func genSearchRequest(nq int64, indexType string, schema *schemapb.CollectionSch
 		PlaceholderGroup: placeHolder,
 		DslType:          commonpb.DslType_Dsl,
 		Nq:               nq,
+		TravelTimestamp:  18446744073709551615,
 	}, nil
 }
 

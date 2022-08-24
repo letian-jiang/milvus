@@ -13,7 +13,7 @@ include_directories(${CMAKE_HOME_DIRECTORY}/src)
 include_directories(${CMAKE_HOME_DIRECTORY}/unittest)
 
 set(bench_srcs 
-    bench_naive.cpp
+#     bench_naive.cpp
     bench_search.cpp
 )
 

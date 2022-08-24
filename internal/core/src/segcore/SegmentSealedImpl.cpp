@@ -15,6 +15,7 @@
 #include "query/SearchOnSealed.h"
 #include "query/ScalarIndex.h"
 #include "Utils.h"
+#include "../unittest/test_utils/DataGen.h"
 
 namespace milvus::segcore {
 
@@ -359,9 +360,12 @@ SegmentSealedImpl::vector_search(int64_t vec_count,
     AssertInfo(is_system_field_ready(), "System field is not ready");
     auto field_id = search_info.field_id_;
     auto& field_meta = schema_->operator[](field_id);
-
+        
+    // std::cout << "SegmentSealedImpl::vector_search: segmentID " << id_ << std::endl;
+    // std::cout << "SegmentSealedImpl::vector_search: check index" << std::to_string(field_id.get()) << get_bit(index_ready_bitset_, field_id) << std::endl;
     AssertInfo(field_meta.is_vector(), "The meta type of vector field is not vector type");
     if (get_bit(index_ready_bitset_, field_id)) {
+        // std::cout << "SegmentSealedImpl::vector_search: use index to search" << std::endl;
         AssertInfo(vector_indexings_.is_ready(field_id),
                    "vector indexes isn't ready for field " + std::to_string(field_id.get()));
         query::SearchOnSealed(*schema_, vector_indexings_, search_info, query_data, query_count, bitset, output, id_);
@@ -369,6 +373,7 @@ SegmentSealedImpl::vector_search(int64_t vec_count,
     } else if (!get_bit(field_data_ready_bitset_, field_id)) {
         PanicInfo("Field Data is not loaded");
     }
+    // std::cout << "SegmentSealedImpl::vector_search: do not use index to search" << std::endl;
 
     query::dataset::SearchDataset dataset{search_info.metric_type_,   query_count,          search_info.topk_,
                                           search_info.round_decimal_, field_meta.get_dim(), query_data};
@@ -630,6 +635,30 @@ SegmentSealedImpl::HasIndex(FieldId field_id) const {
     AssertInfo(!SystemProperty::Instance().IsSystem(field_id),
                "Field id:" + std::to_string(field_id.get()) + " isn't one of system type when drop index");
     return get_bit(index_ready_bitset_, field_id);
+}
+
+void 
+SegmentSealedImpl::BuildVecIndex(FieldId field_id)  {
+    auto vec_ptr = insert_record_.get_field_data<FloatVector>(field_id);
+    auto dim = -1;
+    for (auto [k, v] : schema_->get_fields()) {
+        if (v.is_vector()) {
+            dim = v.get_dim();
+        }
+    }
+    assert(dim != -1);
+    auto data = (float*)vec_ptr->get_chunk_data(0);
+    auto N = vec_ptr->get_chunk(0).size() / dim;
+    // std::cout << "SegmentSealedImpl::BuildVecIndex: got dim=" << dim << " N=" << N << std::endl;
+    auto index = GenVecIndexing(N, dim, data);
+    LoadIndexInfo info;
+    info.index = index;
+    info.field_id = field_id.get();
+    info.index_params["index_type"] = "IVF";
+    info.index_params["index_mode"] = "CPU";
+    info.index_params["metric_type"] = knowhere::metric::L2;
+    DropFieldData(field_id);
+    LoadIndex(info);
 }
 
 bool

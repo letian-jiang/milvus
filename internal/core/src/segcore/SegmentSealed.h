@@ -31,7 +31,9 @@ class SegmentSealed : public SegmentInternalInterface {
     virtual void
     DropIndex(const FieldId field_id) = 0;
     virtual void
-    DropFieldData(const FieldId field_id) = 0;
+    DropFieldData(const FieldId field_id) = 0; 
+    virtual void 
+    BuildVecIndex(FieldId field_id) = 0;
 };
 
 using SegmentSealedPtr = std::unique_ptr<SegmentSealed>;

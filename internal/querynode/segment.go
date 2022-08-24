@@ -316,6 +316,10 @@ func (s *Segment) search(searchReq *searchRequest) (*SearchResult, error) {
 			long int* result_ids,
 			float* result_distances);
 	*/
+	if searchReq == nil {
+		return nil, errors.New("nil searchReq")
+	}
+
 	if s.segmentPtr == nil {
 		return nil, errors.New("null seg core pointer")
 	}
@@ -333,13 +337,15 @@ func (s *Segment) search(searchReq *searchRequest) (*SearchResult, error) {
 		zap.Bool("loadIndex", loadIndex))
 
 	var status C.CStatus
-	s.pool.Submit(func() (interface{}, error) {
-		tr := timerecord.NewTimeRecorder("cgoSearch")
-		status = C.Search(s.segmentPtr, searchReq.plan.cSearchPlan, searchReq.cPlaceholderGroup,
-			C.uint64_t(searchReq.timestamp), &searchResult.cSearchResult, C.int64_t(s.segmentID))
-		metrics.QueryNodeSQSegmentLatencyInCore.WithLabelValues(fmt.Sprint(Params.QueryNodeCfg.GetNodeID()), metrics.SearchLabel).Observe(float64(tr.ElapseSpan().Milliseconds()))
-		return nil, nil
-	}).Await()
+	// s.pool.Submit(func() (interface{}, error) {
+	// 	tr := timerecord.NewTimeRecorder("cgoSearch")
+	// 	status = C.Search(s.segmentPtr, searchReq.plan.cSearchPlan, searchReq.cPlaceholderGroup,
+	// 		C.uint64_t(searchReq.timestamp), &searchResult.cSearchResult, C.int64_t(s.segmentID))
+	// 	metrics.QueryNodeSQSegmentLatencyInCore.WithLabelValues(fmt.Sprint(Params.QueryNodeCfg.GetNodeID()), metrics.SearchLabel).Observe(float64(tr.ElapseSpan().Milliseconds()))
+	// 	return nil, nil
+	// }).Await()
+	status = C.Search(s.segmentPtr, searchReq.plan.cSearchPlan, searchReq.cPlaceholderGroup,
+		C.uint64_t(searchReq.timestamp), &searchResult.cSearchResult, C.int64_t(s.segmentID))
 	if err := HandleCStatus(&status, "Search failed"); err != nil {
 		return nil, err
 	}
@@ -897,5 +903,14 @@ func (s *Segment) segmentLoadIndexData(bytesIndex [][]byte, indexInfo *querypb.F
 
 	log.Info("updateSegmentIndex done", zap.Int64("segmentID", s.ID()), zap.Int64("fieldID", indexInfo.FieldID))
 
+	return nil
+}
+
+func (s *Segment) BuildVecIndex(fieldID int) error {
+	var status C.CStatus
+	status = C.BuildSealedSegmentVecIndex(s.segmentPtr, C.int64_t(fieldID))
+	if err := HandleCStatus(&status, "BuildVecIndex failed"); err != nil {
+		return err
+	}
 	return nil
 }

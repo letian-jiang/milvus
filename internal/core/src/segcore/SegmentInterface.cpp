@@ -55,6 +55,7 @@ SegmentInternalInterface::Search(const query::Plan* plan,
                                  Timestamp timestamp) const {
     std::shared_lock lck(mutex_);
     check_search(plan);
+    // std::cout << "SegmentInternalInterface::Search: nq=" << placeholder_group[0].size() << " ts=" << timestamp << std::endl;
     query::ExecPlanNodeVisitor visitor(*this, timestamp, placeholder_group);
     auto results = std::make_unique<SearchResult>();
     *results = visitor.get_moved_result(*plan->plan_node_);

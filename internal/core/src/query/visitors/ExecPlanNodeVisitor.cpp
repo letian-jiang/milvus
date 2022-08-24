@@ -85,6 +85,7 @@ ExecPlanNodeVisitor::VectorVisitorImpl(VectorPlanNode& node) {
     // skip all calculation
     if (active_count == 0) {
         search_result_opt_ = empty_search_result(num_queries, node.search_info_);
+        std::cout << "VectorVisitorImpl: skip" << std::endl;
         return;
     }
 
@@ -101,9 +102,11 @@ ExecPlanNodeVisitor::VectorVisitorImpl(VectorPlanNode& node) {
     // if bitset_holder is all 1's, we got empty result
     if (bitset_holder.count() == bitset_holder.size()) {
         search_result_opt_ = empty_search_result(num_queries, node.search_info_);
+        std::cout << "VectorVisitorImpl: empty" << std::endl;
         return;
     }
     BitsetView final_view = bitset_holder;
+    assert(final_view.count() == 0); // JLT: set for benchmark
     segment->vector_search(active_count, node.search_info_, src_data, num_queries, timestamp_, final_view,
                            search_result);
 

@@ -2,26 +2,28 @@ package querynode
 
 import (
 	"context"
+	"sync"
 	"testing"
 
+	"github.com/milvus-io/milvus/internal/log"
 	queryPb "github.com/milvus-io/milvus/internal/proto/querypb"
-
-	"github.com/stretchr/testify/assert"
+	"github.com/milvus-io/milvus/internal/util/concurrency"
+	"github.com/panjf2000/ants/v2"
+	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
-	"github.com/milvus-io/milvus/internal/log"
+	"github.com/stretchr/testify/assert"
 )
 
 const (
 	NQ       = 10
 	TOPK     = 10
-	SEGMENTS = 100
-	RECORDS  = 10
-	WARMUP   = 10
-	COUNT    = 10
+	SEGMENTS = 10
+	RECORDS  = 100000            // 250K -> 512MB
+	INDEX    = IndexFaissIVFFlat // not effective
 )
 
-func benchmarkSearch(nq int64, b *testing.B) {
+func BenchmarkSearchWithoutIndex(b *testing.B) {
 	log.SetLevel(zapcore.ErrorLevel)
 	defer log.SetLevel(zapcore.DebugLevel)
 
@@ -29,58 +31,190 @@ func benchmarkSearch(nq int64, b *testing.B) {
 	defer cancel()
 	queryShardObj, err := genSimpleQueryShard(tx)
 	assert.NoError(b, err)
-
-	assert.Equal(b, 0, queryShardObj.metaReplica.getSegmentNum(segmentTypeSealed))
-	assert.Equal(b, 0, queryShardObj.metaReplica.getSegmentNum(segmentTypeGrowing))
-
-	var segmentIDs []UniqueID
-	for i := 0; i < SEGMENTS; i++ {
-		segment, err := genSimpleSealedSegmentWithSegmentID(RECORDS, i)
-		assert.NoError(b, err)
-		err = queryShardObj.metaReplica.setSegment(segment)
-		assert.NoError(b, err)
-		segmentIDs = append(segmentIDs, UniqueID(i))
-	}
-
-	assert.Equal(b, SEGMENTS, queryShardObj.metaReplica.getSegmentNum(segmentTypeSealed))
-	assert.Equal(b, 0, queryShardObj.metaReplica.getSegmentNum(segmentTypeGrowing))
-
 	collection, err := queryShardObj.metaReplica.getCollectionByID(defaultCollectionID)
 	assert.NoError(b, err)
 
-	iReq, _ := genSearchRequest(nq, IndexFaissIDMap, collection.schema)
+	var segments []*Segment
+	for i := 0; i < SEGMENTS; i++ {
+		segmentID := UniqueID(i + 999)
+		segment, err := genSimpleSealedSegmentWithSegmentID(RECORDS, segmentID)
+		assert.NoError(b, err)
+		// segment.BuildVecIndex(100)
+		segments = append(segments, segment)
+	}
+
+	iReq, _ := genSearchRequest(NQ, IndexFaissIDMap, collection.schema)
 	queryReq := &queryPb.SearchRequest{
 		Req:             iReq,
 		DmlChannels:     []string{defaultDMLChannel},
-		SegmentIDs:      segmentIDs,
+		SegmentIDs:      nil,
 		FromShardLeader: true,
 		Scope:           queryPb.DataScope_Historical,
 	}
 	searchReq, err := newSearchRequest(collection, queryReq, queryReq.Req.GetPlaceholderGroup())
 	assert.NoError(b, err)
 
-	for i := 0; i < WARMUP; i++ {
-		_, _, _, err := searchHistorical(queryShardObj.metaReplica, searchReq, defaultCollectionID, nil, queryReq.GetSegmentIDs())
-		assert.NoError(b, err)
-	}
-
-	// f, err := os.Create("nq_" + strconv.Itoa(int(nq)) + ".perf")
-	// if err != nil {
-	// 	panic(err)
-	// }
-	// if err = pprof.StartCPUProfile(f); err != nil {
-	// 	panic(err)
-	// }
-	// defer pprof.StopCPUProfile()
+	// fmt.Println("finish prepare")
+	// fmt.Println("start search b.N=", b.N)
 
 	// start benchmark
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		for j := int64(0); j < COUNT; j++ {
-			_, _, _, err := searchHistorical(queryShardObj.metaReplica, searchReq, defaultCollectionID, nil, queryReq.GetSegmentIDs())
+		wg := sync.WaitGroup{}
+		for _, s := range segments {
+			wg.Add(1)
+			go func(s *Segment) {
+				defer wg.Done()
+				_, err = s.search(searchReq)
+				assert.NoError(b, err)
+			}(s)
+		}
+		wg.Wait()
+	}
+	// fmt.Println("finish search")
+}
+
+func BenchmarkSearchIndexSerial(b *testing.B) {
+	log.SetLevel(zapcore.ErrorLevel)
+	defer log.SetLevel(zapcore.DebugLevel)
+
+	tx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	queryShardObj, err := genSimpleQueryShard(tx)
+	assert.NoError(b, err)
+	collection, err := queryShardObj.metaReplica.getCollectionByID(defaultCollectionID)
+	assert.NoError(b, err)
+
+	var segments []*Segment
+	for i := 0; i < SEGMENTS; i++ {
+		segmentID := UniqueID(i + 999)
+		segment, err := genSimpleSealedSegmentWithSegmentID(RECORDS, segmentID)
+		assert.NoError(b, err)
+		segment.BuildVecIndex(100)
+		segments = append(segments, segment)
+	}
+
+	iReq, _ := genSearchRequest(NQ, IndexFaissIDMap, collection.schema)
+	queryReq := &queryPb.SearchRequest{
+		Req:             iReq,
+		DmlChannels:     []string{defaultDMLChannel},
+		SegmentIDs:      nil,
+		FromShardLeader: true,
+		Scope:           queryPb.DataScope_Historical,
+	}
+	searchReq, err := newSearchRequest(collection, queryReq, queryReq.Req.GetPlaceholderGroup())
+	assert.NoError(b, err)
+
+	// start benchmark
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for _, s := range segments {
+			_, err = s.search(searchReq)
 			assert.NoError(b, err)
 		}
 	}
 }
 
-func BenchmarkSearch(b *testing.B) { benchmarkSearch(1, b) }
+func BenchmarkSearchIndexConcurrent(b *testing.B) {
+	log.SetLevel(zapcore.ErrorLevel)
+	defer log.SetLevel(zapcore.DebugLevel)
+
+	tx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	queryShardObj, err := genSimpleQueryShard(tx)
+	assert.NoError(b, err)
+	collection, err := queryShardObj.metaReplica.getCollectionByID(defaultCollectionID)
+	assert.NoError(b, err)
+
+	var segments []*Segment
+	for i := 0; i < SEGMENTS; i++ {
+		segmentID := UniqueID(i + 999)
+		segment, err := genSimpleSealedSegmentWithSegmentID(RECORDS, segmentID)
+		assert.NoError(b, err)
+		segment.BuildVecIndex(100)
+		segments = append(segments, segment)
+	}
+
+	iReq, _ := genSearchRequest(NQ, IndexFaissIDMap, collection.schema)
+	queryReq := &queryPb.SearchRequest{
+		Req:             iReq,
+		DmlChannels:     []string{defaultDMLChannel},
+		SegmentIDs:      nil,
+		FromShardLeader: true,
+		Scope:           queryPb.DataScope_Historical,
+	}
+	searchReq, err := newSearchRequest(collection, queryReq, queryReq.Req.GetPlaceholderGroup())
+	assert.NoError(b, err)
+
+	// start benchmark
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		wg := sync.WaitGroup{}
+		for _, s := range segments {
+			wg.Add(1)
+			go func(s *Segment) {
+				defer wg.Done()
+				_, err = s.search(searchReq)
+				assert.NoError(b, err)
+			}(s)
+		}
+		wg.Wait()
+	}
+}
+
+func BenchmarkSearchIndexPool(b *testing.B) {
+	log.SetLevel(zapcore.ErrorLevel)
+	defer log.SetLevel(zapcore.DebugLevel)
+
+	tx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	queryShardObj, err := genSimpleQueryShard(tx)
+	assert.NoError(b, err)
+	collection, err := queryShardObj.metaReplica.getCollectionByID(defaultCollectionID)
+	assert.NoError(b, err)
+
+	var segments []*Segment
+	for i := 0; i < SEGMENTS; i++ {
+		segmentID := UniqueID(i + 999)
+		segment, err := genSimpleSealedSegmentWithSegmentID(RECORDS, segmentID)
+		assert.NoError(b, err)
+		segment.BuildVecIndex(100)
+		segments = append(segments, segment)
+	}
+
+	iReq, _ := genSearchRequest(NQ, IndexFaissIDMap, collection.schema)
+	queryReq := &queryPb.SearchRequest{
+		Req:             iReq,
+		DmlChannels:     []string{defaultDMLChannel},
+		SegmentIDs:      nil,
+		FromShardLeader: true,
+		Scope:           queryPb.DataScope_Historical,
+	}
+	searchReq, err := newSearchRequest(collection, queryReq, queryReq.Req.GetPlaceholderGroup())
+	assert.NoError(b, err)
+
+	pool, err := concurrency.NewPool(getNumCPU(), ants.WithPreAlloc(true))
+	if err != nil {
+		log.Error("failed to create goroutine pool for segment loader",
+			zap.Error(err))
+		panic(err)
+	}
+
+	// start benchmark
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		wg := sync.WaitGroup{}
+		for _, s := range segments {
+			wg.Add(1)
+			go func(s *Segment) {
+				defer wg.Done()
+				pool.Submit(func() (interface{}, error) {
+					_, err = s.search(searchReq)
+					assert.NoError(b, err)
+					return nil, nil
+				}).Await()
+			}(s)
+		}
+		wg.Wait()
+	}
+}

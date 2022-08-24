@@ -86,6 +86,10 @@ LoadDeletedRecord(CSegmentInterface c_segment, CLoadDeletedRecordInfo deleted_re
 CStatus
 UpdateSealedSegmentIndex(CSegmentInterface c_segment, CLoadIndexInfo c_load_index_info);
 
+// Create, build and load vector index for sealed segment. For unit testing usage.
+CStatus
+BuildSealedSegmentVecIndex(CSegmentInterface c_segment, int64_t vec_field_id);
+
 CStatus
 DropFieldData(CSegmentInterface c_segment, int64_t field_id);
 

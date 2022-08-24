@@ -18,6 +18,7 @@ package querynode
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"runtime/pprof"
 	"strconv"
@@ -160,44 +161,47 @@ func benchmarkQueryCollectionSearchIndex(nq int64, indexType string, b *testing.
 	reqs := make([]*searchRequest, benchmarkMaxNQ/nq)
 	for i := int64(0); i < benchmarkMaxNQ/nq; i++ {
 		req, err := genSearchPlanAndRequests(collection, indexType, defaultNQ)
-		//msg, err := genSearchMsg(collection.schema, nq, indexType)
+		// msg, err := genSearchMsg(collection.schema, nq, indexType)
 		assert.NoError(b, err)
 		reqs[i] = req
 	}
 
-	f, err := os.Create(indexType + "_nq_" + strconv.Itoa(int(nq)) + ".perf")
-	if err != nil {
-		panic(err)
-	}
-	if err = pprof.StartCPUProfile(f); err != nil {
-		panic(err)
-	}
-	defer pprof.StopCPUProfile()
+	// f, err := os.Create(indexType + "_nq_" + strconv.Itoa(int(nq)) + ".perf")
+	// if err != nil {
+	// 	panic(err)
+	// }
+	// if err = pprof.StartCPUProfile(f); err != nil {
+	// 	panic(err)
+	// }
+	// defer pprof.StopCPUProfile()
+
+	fmt.Println("start search")
 
 	// start benchmark
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		for j := 0; j < benchmarkMaxNQ/int(nq); j++ {
-			_, _, _, err := searchHistorical(queryShardObj.metaReplica, searchReq, defaultCollectionID, nil, []UniqueID{defaultSegmentID})
-			assert.NoError(b, err)
-		}
+		// for j := 0; j < benchmarkMaxNQ/int(nq); j++ {
+		_, _, _, err := searchHistorical(queryShardObj.metaReplica, searchReq, defaultCollectionID, nil, []UniqueID{defaultSegmentID})
+		assert.NoError(b, err)
+		// }
 	}
+	fmt.Println("finish search")
 }
 
-func BenchmarkSearch_NQ1(b *testing.B) { benchmarkQueryCollectionSearch(1, b) }
+// func BenchmarkSearch_NQ1(b *testing.B) { benchmarkQueryCollectionSearch(1, b) }
 
 //func BenchmarkSearch_NQ10(b *testing.B)    { benchmarkQueryCollectionSearch(10, b) }
 //func BenchmarkSearch_NQ100(b *testing.B)   { benchmarkQueryCollectionSearch(100, b) }
 //func BenchmarkSearch_NQ1000(b *testing.B)  { benchmarkQueryCollectionSearch(1000, b) }
 //func BenchmarkSearch_NQ10000(b *testing.B) { benchmarkQueryCollectionSearch(10000, b) }
 
-func BenchmarkSearch_HNSW_NQ1(b *testing.B) {
-	benchmarkQueryCollectionSearchIndex(1, IndexHNSW, b)
-}
+// func BenchmarkSearch_HNSW_NQ1(b *testing.B) {
+// 	benchmarkQueryCollectionSearchIndex(1, IndexHNSW, b)
+// }
 
-func BenchmarkSearch_IVFFLAT_NQ1(b *testing.B) {
-	benchmarkQueryCollectionSearchIndex(1, IndexFaissIVFFlat, b)
-}
+// func BenchmarkSearch_IVFFLAT_NQ1(b *testing.B) {
+// 	benchmarkQueryCollectionSearchIndex(1, IndexFaissIVFFlat, b)
+// }
 
 /*
 func BenchmarkSearch_IVFFLAT_NQ10(b *testing.B) {
