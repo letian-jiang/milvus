@@ -7,9 +7,6 @@ import (
 
 	"github.com/milvus-io/milvus/internal/log"
 	queryPb "github.com/milvus-io/milvus/internal/proto/querypb"
-	"github.com/milvus-io/milvus/internal/util/concurrency"
-	"github.com/panjf2000/ants/v2"
-	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
 	"github.com/stretchr/testify/assert"
@@ -18,31 +15,24 @@ import (
 const (
 	NQ       = 10
 	TOPK     = 10
-	SEGMENTS = 10
-	RECORDS  = 100000            // 250K -> 512MB
-	INDEX    = IndexFaissIVFFlat // not effective
+	SEGMENTS = 64     // number of prepared segments
+	RECORDS  = 100000 // 250K -> 512MB
+	INDEX    = IndexFaissIVFFlat
 )
 
-func BenchmarkSearchWithoutIndex(b *testing.B) {
-	log.SetLevel(zapcore.ErrorLevel)
-	defer log.SetLevel(zapcore.DebugLevel)
+var initOnce sync.Once
+var segments []*Segment
+var req *searchRequest
 
-	tx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	queryShardObj, err := genSimpleQueryShard(tx)
-	assert.NoError(b, err)
-	collection, err := queryShardObj.metaReplica.getCollectionByID(defaultCollectionID)
-	assert.NoError(b, err)
-
-	var segments []*Segment
-	for i := 0; i < SEGMENTS; i++ {
-		segmentID := UniqueID(i + 999)
-		segment, err := genSimpleSealedSegmentWithSegmentID(RECORDS, segmentID)
-		assert.NoError(b, err)
-		// segment.BuildVecIndex(100)
-		segments = append(segments, segment)
+func prepareIndexedSegmentsAndSearchRequest() {
+	qs, err := genSimpleQueryShard(context.TODO())
+	if err != nil {
+		panic(err)
 	}
-
+	collection, err := qs.metaReplica.getCollectionByID(defaultCollectionID)
+	if err != nil {
+		panic(err)
+	}
 	iReq, _ := genSearchRequest(NQ, IndexFaissIDMap, collection.schema)
 	queryReq := &queryPb.SearchRequest{
 		Req:             iReq,
@@ -51,170 +41,171 @@ func BenchmarkSearchWithoutIndex(b *testing.B) {
 		FromShardLeader: true,
 		Scope:           queryPb.DataScope_Historical,
 	}
-	searchReq, err := newSearchRequest(collection, queryReq, queryReq.Req.GetPlaceholderGroup())
-	assert.NoError(b, err)
-
-	// fmt.Println("finish prepare")
-	// fmt.Println("start search b.N=", b.N)
-
-	// start benchmark
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		wg := sync.WaitGroup{}
-		for _, s := range segments {
-			wg.Add(1)
-			go func(s *Segment) {
-				defer wg.Done()
-				_, err = s.search(searchReq)
-				assert.NoError(b, err)
-			}(s)
-		}
-		wg.Wait()
+	req, err = newSearchRequest(collection, queryReq, queryReq.Req.GetPlaceholderGroup())
+	if err != nil {
+		panic(err)
 	}
-	// fmt.Println("finish search")
-}
 
-func BenchmarkSearchIndexSerial(b *testing.B) {
-	log.SetLevel(zapcore.ErrorLevel)
-	defer log.SetLevel(zapcore.DebugLevel)
-
-	tx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	queryShardObj, err := genSimpleQueryShard(tx)
-	assert.NoError(b, err)
-	collection, err := queryShardObj.metaReplica.getCollectionByID(defaultCollectionID)
-	assert.NoError(b, err)
-
-	var segments []*Segment
 	for i := 0; i < SEGMENTS; i++ {
 		segmentID := UniqueID(i + 999)
 		segment, err := genSimpleSealedSegmentWithSegmentID(RECORDS, segmentID)
-		assert.NoError(b, err)
+		if err != nil {
+			panic(err)
+		}
 		segment.BuildVecIndex(100)
 		segments = append(segments, segment)
 	}
+}
 
-	iReq, _ := genSearchRequest(NQ, IndexFaissIDMap, collection.schema)
-	queryReq := &queryPb.SearchRequest{
-		Req:             iReq,
-		DmlChannels:     []string{defaultDMLChannel},
-		SegmentIDs:      nil,
-		FromShardLeader: true,
-		Scope:           queryPb.DataScope_Historical,
-	}
-	searchReq, err := newSearchRequest(collection, queryReq, queryReq.Req.GetPlaceholderGroup())
-	assert.NoError(b, err)
+func benchmarkSearchIndexSerial(b *testing.B, n int) {
+	log.SetLevel(zapcore.ErrorLevel)
+	defer log.SetLevel(zapcore.DebugLevel)
 
-	// start benchmark
+	initOnce.Do(prepareIndexedSegmentsAndSearchRequest)
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		for _, s := range segments {
-			_, err = s.search(searchReq)
+		for i := 0; i < n; i++ {
+			s := segments[i]
+			_, err := s.search(req)
 			assert.NoError(b, err)
 		}
 	}
 }
 
-func BenchmarkSearchIndexConcurrent(b *testing.B) {
+func benchmarkSearchIndexConcurrent(b *testing.B, numSegments, concurrency int) {
 	log.SetLevel(zapcore.ErrorLevel)
 	defer log.SetLevel(zapcore.DebugLevel)
 
-	tx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	queryShardObj, err := genSimpleQueryShard(tx)
-	assert.NoError(b, err)
-	collection, err := queryShardObj.metaReplica.getCollectionByID(defaultCollectionID)
-	assert.NoError(b, err)
+	initOnce.Do(prepareIndexedSegmentsAndSearchRequest)
+	sem := make(chan int, concurrency)
 
-	var segments []*Segment
-	for i := 0; i < SEGMENTS; i++ {
-		segmentID := UniqueID(i + 999)
-		segment, err := genSimpleSealedSegmentWithSegmentID(RECORDS, segmentID)
-		assert.NoError(b, err)
-		segment.BuildVecIndex(100)
-		segments = append(segments, segment)
-	}
-
-	iReq, _ := genSearchRequest(NQ, IndexFaissIDMap, collection.schema)
-	queryReq := &queryPb.SearchRequest{
-		Req:             iReq,
-		DmlChannels:     []string{defaultDMLChannel},
-		SegmentIDs:      nil,
-		FromShardLeader: true,
-		Scope:           queryPb.DataScope_Historical,
-	}
-	searchReq, err := newSearchRequest(collection, queryReq, queryReq.Req.GetPlaceholderGroup())
-	assert.NoError(b, err)
-
-	// start benchmark
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		wg := sync.WaitGroup{}
-		for _, s := range segments {
+		for i := 0; i < numSegments; i++ {
+			s := segments[i]
 			wg.Add(1)
 			go func(s *Segment) {
 				defer wg.Done()
-				_, err = s.search(searchReq)
+				sem <- 1
+				_, err := s.search(req)
 				assert.NoError(b, err)
+				<-sem
 			}(s)
 		}
 		wg.Wait()
 	}
 }
 
-func BenchmarkSearchIndexPool(b *testing.B) {
-	log.SetLevel(zapcore.ErrorLevel)
-	defer log.SetLevel(zapcore.DebugLevel)
+func BenchmarkSearchIndexSegment1Concurrency1(b *testing.B) {
+	benchmarkSearchIndexConcurrent(b, 1, 1)
+}
 
-	tx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	queryShardObj, err := genSimpleQueryShard(tx)
-	assert.NoError(b, err)
-	collection, err := queryShardObj.metaReplica.getCollectionByID(defaultCollectionID)
-	assert.NoError(b, err)
+func BenchmarkSearchIndexSegment2Concurrency1(b *testing.B) {
+	benchmarkSearchIndexConcurrent(b, 2, 1)
+}
 
-	var segments []*Segment
-	for i := 0; i < SEGMENTS; i++ {
-		segmentID := UniqueID(i + 999)
-		segment, err := genSimpleSealedSegmentWithSegmentID(RECORDS, segmentID)
-		assert.NoError(b, err)
-		segment.BuildVecIndex(100)
-		segments = append(segments, segment)
-	}
+func BenchmarkSearchIndexSegment2Concurrency2(b *testing.B) {
+	benchmarkSearchIndexConcurrent(b, 2, 2)
+}
 
-	iReq, _ := genSearchRequest(NQ, IndexFaissIDMap, collection.schema)
-	queryReq := &queryPb.SearchRequest{
-		Req:             iReq,
-		DmlChannels:     []string{defaultDMLChannel},
-		SegmentIDs:      nil,
-		FromShardLeader: true,
-		Scope:           queryPb.DataScope_Historical,
-	}
-	searchReq, err := newSearchRequest(collection, queryReq, queryReq.Req.GetPlaceholderGroup())
-	assert.NoError(b, err)
+func BenchmarkSearchIndexSegment4Concurrency1(b *testing.B) {
+	benchmarkSearchIndexConcurrent(b, 4, 1)
+}
 
-	pool, err := concurrency.NewPool(getNumCPU(), ants.WithPreAlloc(true))
-	if err != nil {
-		log.Error("failed to create goroutine pool for segment loader",
-			zap.Error(err))
-		panic(err)
-	}
+func BenchmarkSearchIndexSegment4Concurrency2(b *testing.B) {
+	benchmarkSearchIndexConcurrent(b, 4, 2)
+}
 
-	// start benchmark
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		wg := sync.WaitGroup{}
-		for _, s := range segments {
-			wg.Add(1)
-			go func(s *Segment) {
-				defer wg.Done()
-				pool.Submit(func() (interface{}, error) {
-					_, err = s.search(searchReq)
-					assert.NoError(b, err)
-					return nil, nil
-				}).Await()
-			}(s)
-		}
-		wg.Wait()
-	}
+func BenchmarkSearchIndexSegment4Concurrency4(b *testing.B) {
+	benchmarkSearchIndexConcurrent(b, 4, 4)
+}
+
+func BenchmarkSearchIndexSegment8Concurrency1(b *testing.B) {
+	benchmarkSearchIndexConcurrent(b, 8, 1)
+}
+
+func BenchmarkSearchIndexSegment8Concurrency2(b *testing.B) {
+	benchmarkSearchIndexConcurrent(b, 8, 2)
+}
+
+func BenchmarkSearchIndexSegment8Concurrency4(b *testing.B) {
+	benchmarkSearchIndexConcurrent(b, 8, 4)
+}
+
+func BenchmarkSearchIndexSegment8Concurrency8(b *testing.B) {
+	benchmarkSearchIndexConcurrent(b, 8, 8)
+}
+
+func BenchmarkSearchIndexSegment16Concurrency1(b *testing.B) {
+	benchmarkSearchIndexConcurrent(b, 16, 1)
+}
+
+func BenchmarkSearchIndexSegment16Concurrency2(b *testing.B) {
+	benchmarkSearchIndexConcurrent(b, 16, 2)
+}
+
+func BenchmarkSearchIndexSegment16Concurrency4(b *testing.B) {
+	benchmarkSearchIndexConcurrent(b, 16, 4)
+}
+
+func BenchmarkSearchIndexSegment16Concurrency8(b *testing.B) {
+	benchmarkSearchIndexConcurrent(b, 16, 8)
+}
+
+func BenchmarkSearchIndexSegment16Concurrency16(b *testing.B) {
+	benchmarkSearchIndexConcurrent(b, 16, 16)
+}
+
+func BenchmarkSearchIndexSegment32Concurrency1(b *testing.B) {
+	benchmarkSearchIndexConcurrent(b, 32, 1)
+}
+
+func BenchmarkSearchIndexSegment32Concurrency2(b *testing.B) {
+	benchmarkSearchIndexConcurrent(b, 32, 2)
+}
+
+func BenchmarkSearchIndexSegment32Concurrency4(b *testing.B) {
+	benchmarkSearchIndexConcurrent(b, 32, 4)
+}
+
+func BenchmarkSearchIndexSegment32Concurrency8(b *testing.B) {
+	benchmarkSearchIndexConcurrent(b, 32, 8)
+}
+
+func BenchmarkSearchIndexSegment32Concurrency16(b *testing.B) {
+	benchmarkSearchIndexConcurrent(b, 32, 16)
+}
+
+func BenchmarkSearchIndexSegment32Concurrency32(b *testing.B) {
+	benchmarkSearchIndexConcurrent(b, 32, 32)
+}
+
+func BenchmarkSearchIndexSegment64Concurrency1(b *testing.B) {
+	benchmarkSearchIndexConcurrent(b, 64, 1)
+}
+
+func BenchmarkSearchIndexSegment64Concurrency2(b *testing.B) {
+	benchmarkSearchIndexConcurrent(b, 64, 2)
+}
+
+func BenchmarkSearchIndexSegment64Concurrency4(b *testing.B) {
+	benchmarkSearchIndexConcurrent(b, 64, 4)
+}
+
+func BenchmarkSearchIndexSegment64Concurrency8(b *testing.B) {
+	benchmarkSearchIndexConcurrent(b, 64, 8)
+}
+
+func BenchmarkSearchIndexSegment64Concurrency16(b *testing.B) {
+	benchmarkSearchIndexConcurrent(b, 64, 16)
+}
+
+func BenchmarkSearchIndexSegment64Concurrency32(b *testing.B) {
+	benchmarkSearchIndexConcurrent(b, 64, 32)
+}
+
+func BenchmarkSearchIndexSegment64Concurrency64(b *testing.B) {
+	benchmarkSearchIndexConcurrent(b, 64, 64)
 }

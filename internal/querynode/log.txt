@@ -1,0 +1,37 @@
+[2022/08/24 17:02:26.158 +08:00] [INFO] [config/etcd_source.go:133] ["start refreshing configurations"]
+{"level":"warn","ts":1661331746.158829,"caller":"fileutil/fileutil.go:57","msg":"check file permission","error":"directory \"/tmp\" exist, but the permission is \"dtrwxrwxrwx\". The recommended permission is \"-rwx------\" to prevent possible unprivileged access to the data"}
+{"level":"warn","ts":"2022-08-24T17:02:26.168+0800","caller":"auth/store.go:1220","msg":"simple token is not cryptographically signed"}
+goos: linux
+goarch: amd64
+pkg: github.com/milvus-io/milvus/internal/querynode
+cpu: Intel(R) Core(TM) i7-8700 CPU @ 3.20GHz
+BenchmarkSearchIndexSegment1Concurrency1-12      	   18618	    641491 ns/op
+BenchmarkSearchIndexSegment2Concurrency1-12      	    8905	   1296604 ns/op
+BenchmarkSearchIndexSegment2Concurrency2-12      	    7138	   1681555 ns/op
+BenchmarkSearchIndexSegment4Concurrency1-12      	    4501	   2687062 ns/op
+BenchmarkSearchIndexSegment4Concurrency2-12      	    3769	   3136900 ns/op
+BenchmarkSearchIndexSegment4Concurrency4-12      	    3853	   3088580 ns/op
+BenchmarkSearchIndexSegment8Concurrency1-12      	    2128	   5519509 ns/op
+BenchmarkSearchIndexSegment8Concurrency2-12      	    1941	   6027741 ns/op
+BenchmarkSearchIndexSegment8Concurrency4-12      	    1989	   5943845 ns/op
+BenchmarkSearchIndexSegment8Concurrency8-12      	    2050	   5786183 ns/op
+BenchmarkSearchIndexSegment16Concurrency1-12     	    1090	  11048916 ns/op
+BenchmarkSearchIndexSegment16Concurrency2-12     	    1016	  11732763 ns/op
+BenchmarkSearchIndexSegment16Concurrency4-12     	    1056	  11264468 ns/op
+BenchmarkSearchIndexSegment16Concurrency8-12     	    1084	  10984250 ns/op
+BenchmarkSearchIndexSegment16Concurrency16-12    	    1074	  10754723 ns/op
+BenchmarkSearchIndexSegment32Concurrency1-12     	     538	  22275122 ns/op
+BenchmarkSearchIndexSegment32Concurrency2-12     	     514	  23501383 ns/op
+BenchmarkSearchIndexSegment32Concurrency4-12     	     540	  21939607 ns/op
+BenchmarkSearchIndexSegment32Concurrency8-12     	     564	  21173426 ns/op
+BenchmarkSearchIndexSegment32Concurrency16-12    	     565	  20831120 ns/op
+BenchmarkSearchIndexSegment32Concurrency32-12    	     568	  20900532 ns/op
+BenchmarkSearchIndexSegment64Concurrency1-12     	     268	  44508141 ns/op
+BenchmarkSearchIndexSegment64Concurrency2-12     	     259	  46424673 ns/op
+BenchmarkSearchIndexSegment64Concurrency4-12     	     277	  43238613 ns/op
+BenchmarkSearchIndexSegment64Concurrency8-12     	     291	  41245532 ns/op
+BenchmarkSearchIndexSegment64Concurrency16-12    	     290	  41004730 ns/op
+BenchmarkSearchIndexSegment64Concurrency32-12    	     286	  41159503 ns/op
+BenchmarkSearchIndexSegment64Concurrency64-12    	     291	  41078972 ns/op
+PASS
+ok  	github.com/milvus-io/milvus/internal/querynode	3606.426s
