@@ -55,7 +55,7 @@ SearchOnSealed(const Schema& schema,
         } catch (std::exception& e) {
             AssertInfo(false, e.what());
         }
-        return field_indexing->indexing_->Query(ds, conf, bitset);
+        return field_indexing->indexing_->Query(ds, conf, bitset); // search using dataset, config and bitset
     }();
 
     auto ids = knowhere::GetDatasetIDs(final);

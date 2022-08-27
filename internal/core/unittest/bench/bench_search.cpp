@@ -15,11 +15,13 @@
 #include "segcore/SegmentGrowing.h"
 #include "segcore/SegmentSealed.h"
 #include "test_utils/DataGen.h"
+#include "test_utils/BS_thread_pool.hpp"
 
 using namespace milvus;
 using namespace milvus::query;
 using namespace milvus::segcore;
 
+const int ns = 64; // number of segments
 const int dim = 512;
 const int N = 100000;
 const int nq = 100;
@@ -65,30 +67,47 @@ auto ph_group = [] {
     return ph_group;
 }();
 
-static void
-Search_Sealed_Without_Index(benchmark::State& state) {
-    auto segment = CreateSealedSegment(schema);
-    SealedLoadFieldData(dataset_, *segment);
-
-    for (auto _ : state) {
-        auto qr = segment->Search(plan.get(), ph_group.get(), ts);
+auto segments = [] {
+    std::vector<SegmentSealedPtr> segments(ns);
+    for (int i = 0; i < ns; i++) {
+        auto segment = CreateSealedSegment(schema);
+        SealedLoadFieldData(dataset_, *segment);
+        segment->BuildVecIndex(milvus::FieldId(100));
+        segments[i] = move(segment);
     }
+    return segments;
+}();
+
+void task(int segment_id) {
+    auto qr = segments[segment_id]->Search(plan.get(), ph_group.get(), ts);
 }
 
 static void
-Search_Sealed_With_Index(benchmark::State& state) {
-    auto segment = CreateSealedSegment(schema);
-    SealedLoadFieldData(dataset_, *segment);
-    segment->BuildVecIndex(milvus::FieldId(100));
-
-    for (int i = 0; i < 100; i++) {
-        auto qr = segment->Search(plan.get(), ph_group.get(), ts);
-    }
-
+SearchIndex(benchmark::State& state) {
+    auto num_segments = state.range(0);
+    auto pool_size = state.range(1);
+    
+    // init thread pool
+    auto pool = BS::thread_pool(pool_size);
+    // benchmark
     for (auto _ : state) {
-        auto qr = segment->Search(plan.get(), ph_group.get(), ts);
+        for (int i = 0; i < (int)num_segments; i++) {
+            pool.push_task(task, i);
+        }
+        pool.wait_for_tasks();
     }
 }
 
-BENCHMARK(Search_Sealed_Without_Index);
-BENCHMARK(Search_Sealed_With_Index);
+static void 
+SegmentConcurrencyArguments(benchmark::internal::Benchmark* b) {
+  for (int i = 1; i <= ns; i <<= 1) { // segments
+    for (int j = 1; j <= i; j <<= 1) { // concurrency
+        // std::cout << "args: " << i << ' ' << j << std::endl;
+        b->Args({i, j});
+    }
+  }
+}
+
+// BENCHMARK(SearchIndex)->Apply(SegmentConcurrencyArguments);
+// BENCHMARK(SearchIndex)->Apply(SegmentConcurrencyArguments)->MeasureProcessCPUTime();
+BENCHMARK(SearchIndex)->MinTime(10)->Apply(SegmentConcurrencyArguments)->MeasureProcessCPUTime()->UseRealTime();
